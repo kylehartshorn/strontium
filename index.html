@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Strontium Guesser</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+    }
+	.map-scroll-container {
+	   width: 100%;
+	   height: 100%;
+	   overflow: auto;
+	   position: relative
+	}
+	
+    canvas {
+      cursor: crosshair;
+	  display: block;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 h-screen flex flex-col md:flex-row overflow-hidden">
+
+  <!-- Left/Main Canvas Area -->
+  <main class="flex-1 flex flex-col h-full min-w-0 bg-slate-200">
+    <!-- Header Bar -->
+    <header class="bg-white border-b border-slate-300 p-4 flex items-center justify-between shadow-sm z-10">
+      <div>
+        <h1 class="text-xl font-bold text-slate-900 flex items-center gap-2">
+          <span>🧪</span> Strontium Guesser
+        </h1>
+        <p class="text-xs text-slate-500">Click map zones to sample <sup>87</sup>Sr/<sup>86</sup>Sr isotope ratio values.</p>
+      </div>
+    </header>
+
+    <!-- Canvas Scroll Container -->
+	<div class="map-scroll-container">
+    <div class="flex-1 overflow-auto p-4 flex items-center justify-center relative" id="canvasContainer">
+      <div class="relative inline-block shadow-lg rounded-lg overflow-hidden bg-white border border-slate-300">
+        <canvas id="mapCanvas"></canvas>
+      </div>
+    </div>
+	</div>
+
+    <!-- Status Bar -->
+    <footer class="bg-white border-t border-slate-300 px-4 py-2 text-xs text-slate-600 flex justify-between items-center">
+      <div id="hoverInfo">Hover position: X: -, Y: - | Color: None</div>
+    </footer>
+  </main>
+
+  <!-- Right Sidebar -->
+  <aside class="w-full md:w-80 lg:w-96 bg-white border-l border-slate-300 flex flex-col h-full shadow-lg z-20">
+    <!-- Sidebar Header -->
+    <div class="p-4 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+      <div>
+        <h2 class="font-bold text-slate-800 text-base">Sampled Regions</h2>
+        <p class="text-xs text-slate-500"><span id="selectionCount">0</span> sample(s) collected</p>
+      </div>
+      <button id="clearListBtn" class="px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded transition">
+        Clear All
+      </button>
+    </div>
+
+    <!-- Color Lookup Legend Box -->
+    <div class="p-3 bg-slate-100 border-b border-slate-200">
+      <div class="text-xs font-semibold text-slate-600 mb-2 tracking-wider">LEGEND (<sup>87</sup>Sr/<sup>86</sup>Sr)</div>
+      <div id="lookupLegend" class="grid grid-cols-2 gap-1 text-xs">
+        <!-- JS populated legend -->
+      </div>
+    </div>
+
+    <!-- History List -->
+    <div id="historyList" class="flex-1 overflow-y-auto p-4 space-y-3">
+      <!-- Empty state template -->
+      <div id="emptyState" class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+        <svg class="w-12 h-12 mb-2 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+        <p class="text-sm font-medium">No map points clicked yet</p>
+        <p class="text-xs text-slate-400 mt-1">Click colored zones on the map image to record their strontium isotope values.</p>
+      </div>
+    </div>
+
+    <!-- Summary Footer -->
+    <div class="p-4 bg-slate-900 text-white border-t border-slate-700 shadow-inner">
+      <div class="flex justify-between items-center">
+        <div>
+          <div class="text-xs text-slate-400 uppercase tracking-wider font-semibold">Average Value</div>
+          <div class="text-xs text-slate-500">Mean <sup>87</sup>Sr/<sup>86</sup>Sr Ratio</div>
+        </div>
+        <div id="avgDisplay" class="text-2xl font-black font-mono text-emerald-400">
+          0.0000
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <script>
+    // -------------------------------------------------------------
+    // Predefined Lookup Table: Maps hex/RGB to 87Sr/86Sr Ratios
+    // -------------------------------------------------------------
+    const LOOKUP_TABLE = [
+      { hex: '#1D2076', rgb: [29, 32, 118],   value: 0.7045, name: '' }, 	//dark blue
+      { hex: '#42468D', rgb: [66, 70, 141],   value: 0.7060, name: '' },
+      { hex: '#849FCC', rgb: [132, 159, 204], value: 0.7090, name: '' },
+      { hex: '#A5C8D8', rgb: [165, 200, 216], value: 0.7100, name: '' },
+      { hex: '#BFD4A0', rgb: [191, 212, 160], value: 0.7120, name: '' },
+      { hex: '#DDE250', rgb: [221, 226, 80],  value: 0.7140, name: '' },	//yellow-green
+	  { hex: '#F3EC48', rgb: [243, 236, 72],  value: 0.7175, name: '' },	//yellow
+      { hex: '#EABB19', rgb: [234, 187, 25],  value: 0.7250, name: '' },	//yellow-orange
+      { hex: '#CF6400', rgb: [207, 100, 0],   value: 0.7400, name: '' },	//orange
+	  { hex: '#BF2700', rgb: [191, 39, 0],   value: 0.7750, name: '' }    	//red
+    ];
+
+    // State Variables
+    let currentImage = null;
+	let overlayImage = null;
+    const clicksHistory = [];
+
+    // DOM Elements
+    const canvas = document.getElementById('mapCanvas');
+    const ctx = canvas.getContext('2d');
+    const hoverInfo = document.getElementById('hoverInfo');
+    const historyList = document.getElementById('historyList');
+    const emptyState = document.getElementById('emptyState');
+    const clearListBtn = document.getElementById('clearListBtn');
+    const lookupLegend = document.getElementById('lookupLegend');
+    const selectionCount = document.getElementById('selectionCount');
+    const avgDisplay = document.getElementById('avgDisplay');
+
+    // -------------------------------------------------------------
+    // Initialization
+    // -------------------------------------------------------------
+    window.onload = () => {
+      renderLegend();
+      loadMapImage();
+      setupEventListeners();
+    };
+
+    function renderLegend() {
+      lookupLegend.innerHTML = LOOKUP_TABLE.map(item => `
+        <div class="flex items-center gap-1.5 bg-white p-1 rounded border border-slate-200">
+          <div class="w-3 h-3 rounded-full border border-slate-400" style="background-color: ${item.hex}"></div>
+          <div class="truncate">
+            <span class="font-bold text-slate-700">${item.value.toFixed(4)}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function loadMapImage() {
+      const img = new Image();
+      img.onload = () => {
+        currentImage = img;
+        redrawCanvas();
+      };
+      img.src = "map.png";
+	  
+	  const overlay = new Image();
+	  overlay.onload = () => {
+	    overlayImage = overlay;
+		redrawCanvas();
+	  };
+	  overlay.src = "map_state_outlines.png";
+    }
+
+    // -------------------------------------------------------------
+    // Canvas & Render Functions
+    // -------------------------------------------------------------
+    function redrawCanvas() {
+      if (!currentImage) return;
+
+      canvas.width = currentImage.width;
+      canvas.height = currentImage.height;
+
+      ctx.drawImage(currentImage, 0, 0);
+	  ctx.drawImage(overlayImage, 0, 0);
+
+      // Draw markers for selected points
+      clicksHistory.forEach((item, idx) => {
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#0f172a';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = item.hex;
+        ctx.fill();
+
+        ctx.fillStyle = '#0f172a';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.fillText(`#${idx + 1}`, item.x + 11, item.y + 4);
+      });
+    }
+
+    // -------------------------------------------------------------
+    // Color Logic & Lookup
+    // -------------------------------------------------------------
+    function isWhiteOrNearWhite(r, g, b, threshold = 245) {
+      return r >= threshold && g >= threshold && b >= threshold;
+    }
+
+    function rgbToHex(r, g, b) {
+      return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+    }
+
+    function lookupColorValue(r, g, b) {
+      let minDistance = Infinity;
+      let matchedEntry = null;
+
+      for (const entry of LOOKUP_TABLE) {
+        const [er, eg, eb] = entry.rgb;
+        const dist = Math.sqrt(
+          Math.pow(r - er, 2) + 
+          Math.pow(g - eg, 2) + 
+          Math.pow(b - eb, 2)
+        );
+
+        if (dist < minDistance) {
+          minDistance = dist;
+          matchedEntry = entry;
+        }
+      }
+
+      return {
+        matched: matchedEntry,
+        distance: minDistance
+      };
+    }
+
+    // -------------------------------------------------------------
+    // User Interactions
+    // -------------------------------------------------------------
+    function setupEventListeners() {
+      canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        const x = Math.floor((e.clientX - rect.left) * scaleX);
+        const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+        const pixel = ctx.getImageData(x, y, 1, 1).data;
+        const [r, g, b, a] = pixel;
+
+        if (a === 0 || isWhiteOrNearWhite(r, g, b)) {
+          showNotification('Unmapped background area clicked — Ignored.');
+          return;
+        }
+
+        const hex = rgbToHex(r, g, b);
+        const lookupResult = lookupColorValue(r, g, b);
+
+        const record = {
+          id: Date.now(),
+          x,
+          y,
+          rgb: `rgb(${r}, ${g}, ${b})`,
+          hex,
+          numericValue: lookupResult.matched.value,
+          categoryName: lookupResult.matched.name
+        };
+
+        clicksHistory.push(record);
+        
+        redrawCanvas();
+        updateHistorySidebar();
+      });
+
+      canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        const x = Math.floor((e.clientX - rect.left) * scaleX);
+        const y = Math.floor((e.clientY - rect.top) * scaleY);
+
+        if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
+          const pixel = ctx.getImageData(x, y, 1, 1).data;
+          const [r, g, b] = pixel;
+          const isWhite = isWhiteOrNearWhite(r, g, b);
+          const hex = isWhite ? 'White Background' : rgbToHex(r, g, b);
+
+          hoverInfo.innerHTML = `Hover Position: <strong>X: ${x}, Y: ${y}</strong> | Color: <strong>${hex}</strong>`;
+        }
+      });
+
+      clearListBtn.addEventListener('click', () => {
+        clicksHistory.length = 0;
+        redrawCanvas();
+        updateHistorySidebar();
+      });
+    }
+
+    // -------------------------------------------------------------
+    // Sidebar & Average Calculations
+    // -------------------------------------------------------------
+    function updateHistorySidebar() {
+      selectionCount.textContent = clicksHistory.length;
+
+      if (clicksHistory.length === 0) {
+        emptyState.classList.remove('hidden');
+        const items = historyList.querySelectorAll('.history-item');
+        items.forEach(el => el.remove());
+        avgDisplay.textContent = '0.0000';
+        return;
+      }
+
+      emptyState.classList.add('hidden');
+
+      // Calculate Average Value
+      const totalSum = clicksHistory.reduce((acc, curr) => acc + curr.numericValue, 0);
+      const averageValue = totalSum / clicksHistory.length;
+      avgDisplay.textContent = averageValue.toFixed(4);
+
+      const itemsHtml = clicksHistory.map((item, index) => `
+        <div class="history-item bg-white p-3 rounded-lg border border-slate-200 shadow-sm flex items-center justify-between gap-3">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-6 h-6 rounded-full bg-slate-800 text-white font-bold text-xs flex items-center justify-center shrink-0">
+              #${index + 1}
+            </div>
+
+            <div class="w-8 h-8 rounded-md border border-slate-300 shadow-inner shrink-0 flex items-center justify-center" style="background-color: ${item.hex}">
+            </div>
+
+            <div class="min-w-0">
+              <div class="text-xs font-medium text-slate-500 flex items-center gap-1">
+                <span>Pos: (${item.x}, ${item.y})</span>
+              </div>
+              <div class="text-xs font-semibold text-slate-800 truncate">
+                ${item.categoryName}
+              </div>
+            </div>
+          </div>
+
+          <div class="text-right shrink-0">
+            <div class="text-[10px] text-slate-400 font-medium"><sup>87</sup>Sr/<sup>86</sup>Sr</div>
+            <div class="text-sm font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 font-mono inline-block">
+              ${item.numericValue.toFixed(4)}
+            </div>
+          </div>
+        </div>
+      `).join('');
+
+      const existingItems = historyList.querySelectorAll('.history-item');
+      existingItems.forEach(el => el.remove());
+      historyList.insertAdjacentHTML('beforeend', itemsHtml);
+
+      historyList.scrollTop = historyList.scrollHeight;
+    }
+
+    function showNotification(msg) {
+      const toast = document.createElement('div');
+      toast.className = 'fixed bottom-12 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white text-xs px-4 py-2 rounded-full shadow-lg z-50 transition-opacity duration-300';
+      toast.textContent = msg;
+      document.body.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 1500);
+    }
+  </script>
+</body>
+</html>
